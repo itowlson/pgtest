@@ -1,0 +1,5 @@
+comment = 'pgtest:  Created by pgrx'
+default_version = '@CARGO_VERSION@'
+module_pathname = '$libdir/pgtest'
+relocatable = false
+superuser = true
