@@ -60,61 +60,46 @@ impl TriggerExecutor for PgEventTrigger {
     }
 
     async fn run(self, _config: Self::RunConfig) -> anyhow::Result<()> {
-        // This trigger spawns threads, which Ctrl+C does not kill.  So
-        // for this case we need to detect Ctrl+C and shut those threads
-        // down.  For simplicity, we do this by terminating the process.
-        tokio::spawn(async move {
-            tokio::signal::ctrl_c().await.unwrap();
-            std::process::exit(0);
-        });
-
-        loop { //for line in std::io::stdin().lines() {
-            let mut line = String::new();
-            std::io::stdin().read_line(&mut line)?;
-            match line.split_once(":") {
-                Some((tbl, text)) => {
-                    let new_text = self.handle_pg_event(tbl, text).await?;
-                    println!("result: {new_text}");
-                },
-                None => {
-                    println!("bad command");
-                }   
-            }
-        };
-
-        // tokio_scoped::scope(|scope| {
-        //     // For each component, run its own timer loop
-        //     for (c, t) in &self.component_tables {
-        //         scope.spawn(async {
-        //             let duration = tokio::time::Duration::from_millis(2000);
-        //             loop {
-        //                 tokio::time::sleep(duration).await;
-        //                 let new_text = self.handle_pg_event(c, "biscuits").await.unwrap();
-        //                 println!("Wasm module proposed change to {new_text}");
-        //             }
-        //         });
-        //     }
+        // // This trigger spawns threads, which Ctrl+C does not kill.  So
+        // // for this case we need to detect Ctrl+C and shut those threads
+        // // down.  For simplicity, we do this by terminating the process.
+        // tokio::spawn(async move {
+        //     tokio::signal::ctrl_c().await.unwrap();
+        //     std::process::exit(0);
         // });
 
-        // Ok(())
+        // loop { //for line in std::io::stdin().lines() {
+        //     let mut line = String::new();
+        //     std::io::stdin().read_line(&mut line)?;
+        //     match line.split_once(":") {
+        //         Some((tbl, text)) => {
+        //             let new_text = self.handle_pg_event(tbl, text).await?;
+        //             println!("result: {new_text}");
+        //         },
+        //         None => {
+        //             println!("bad command");
+        //         }   
+        //     }
+        // };
+        todo!("rework Spin trigger `run` for standalone execution")
     }
 }
 
 impl PgEventTrigger {
-    pub async fn handle_pg_event(&self, table: &str, col_value: &str) -> anyhow::Result<String> {
+    pub async fn handle_pg_event(&self, table: &str, row: RowParam<'_>) -> anyhow::Result<Option<RowResult>> {
         match self.component_tables.get(table) {
             Some(c) => {
-                let new_text = self.handle_pg_event_core(c, col_value).await?;
-                Ok(new_text)
+                let new_row = self.handle_pg_event_core(c, row).await?;
+                Ok(new_row)
             },
             None => {
                 println!("no event set up for table");
-                Ok(col_value.to_owned())
+                Ok(None)
             }
         }
     }
 
-    async fn handle_pg_event_core(&self, component_id: &str, col_value: &str) -> anyhow::Result<String> {
+    async fn handle_pg_event_core(&self, component_id: &str, row: RowParam<'_>) -> anyhow::Result<Option<RowResult>> {
         // Load the guest...
         let (instance, mut store) = self.engine.prepare_instance(component_id).await?;
         let EitherInstance::Component(instance) = instance else {
@@ -122,6 +107,6 @@ impl PgEventTrigger {
         };
         let instance = SpinPgEvent::new(&mut store, &instance)?;
         // ...and call the entry point
-        instance.call_handle_pg_event(&mut store, col_value).await
+        instance.call_handle_pg_event(&mut store, row).await
     }
 }

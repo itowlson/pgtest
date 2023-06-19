@@ -18,11 +18,11 @@ pub struct RunningApp {
 }
 
 impl RunningApp {
-    pub fn handle_pg_event(&self, table: &str, col_value: &str) -> anyhow::Result<String> {
+    pub fn handle_pg_event(&self, table: &str, row: RowParam<'_>) -> anyhow::Result<Option<RowResult>> {
         // println!("handling a pg-event");
         let trigger = self.trigger.clone();
         self.rt.block_on(async move {
-            trigger.handle_pg_event(table, col_value).await
+            trigger.handle_pg_event(table, row).await
         })
     }
 }
@@ -47,6 +47,8 @@ pub async fn run(app: &App) -> anyhow::Result<RunningApp> {
 
 use spin_app::Loader;
 use spin_trigger::{HostComponentInitData, RuntimeConfig, TriggerExecutorBuilder};
+use crate::trigger::{RowParam, RowResult};
+
 use super::trigger::PgEventTrigger;
 
 async fn build_executor(

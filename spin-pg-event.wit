@@ -1,3 +1,21 @@
 default world spin-pg-event {
-  export handle-pg-event: func(col-value: string) -> string
+  variant db-value {
+      boolean(bool),
+      int32(s32),
+      uint32(u32),
+      str(string),
+      db-null,
+      unsupported,
+  }
+
+  record cell {
+    name: string,
+    value: db-value,
+  }
+  
+  record row {
+    columns: list<cell>,
+  }
+
+  export handle-pg-event: func(row: row) -> option<row>
 }

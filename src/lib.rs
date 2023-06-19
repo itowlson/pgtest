@@ -1,9 +1,12 @@
 mod run;
 mod trigger;
 
-use std::sync::OnceLock;
+use std::{sync::OnceLock};
 
-use pgrx::prelude::*;
+use pgrx::{prelude::*, pg_sys::BuiltinOid};
+use trigger::DbValueResult;
+
+use crate::trigger::{RowParam, DbValueParam, CellParam};
 
 pgrx::pg_module_magic!();
 
@@ -25,7 +28,7 @@ enum TriggerError {
 
 fn sample_app() -> run::App {
     run::App::new(
-        "ghcr.io/itowlson/pg-app-example:v2",
+        "ghcr.io/itowlson/pg-app-example:v3",
         "/home/ivan/testing/pgtest/STATEYWATEY",
     )
 }
@@ -50,13 +53,47 @@ fn pass_to_spin_trigger<'a>(trigger: &'a pgrx::PgTrigger<'a>,) -> Result<Option<
         ra
     });
 
+    // NOTE: THIS HANDLES ONLY INSERT TRIGGERS SO FAR
+
     let table = trigger.table_name().map_err(|e| TriggerError::CantTable(e))?;
     let mut new = trigger.new().ok_or(TriggerError::NullTriggerTuple)?.into_owned();
-    let col_name = "title";
 
-    if let Some(col_value) = new.get_by_name(col_name)? {
-        let new_value = ra.handle_pg_event(&table, col_value)?;
-        new.set_by_name(col_name, new_value)?;
+    let mut columns = vec![];
+    // let mut values = vec![];
+
+    for (index, attr) in new.attributes() {
+        let col = attr.name();
+        // columns.push(col);
+
+        let type_oid = attr.type_oid();
+        let value = if type_oid == PgOid::BuiltIn(BuiltinOid::BYTEAOID) {
+            DbValueParam::Unsupported
+        } else if type_oid == PgOid::BuiltIn(BuiltinOid::BOOLOID) {
+            new.get_by_index(index)?.map(DbValueParam::Boolean).unwrap_or(DbValueParam::DbNull)
+        } else if type_oid == PgOid::BuiltIn(BuiltinOid::VARCHAROID) {
+            new.get_by_index(index)?.map(DbValueParam::Str).unwrap_or(DbValueParam::DbNull)
+        } else if type_oid == PgOid::BuiltIn(BuiltinOid::TEXTOID) {
+            new.get_by_index(index)?.map(DbValueParam::Str).unwrap_or(DbValueParam::DbNull)
+        } else {
+            DbValueParam::Unsupported
+        };
+        // values.push(value);
+
+        columns.push(CellParam { name: col, value });
+    }
+
+    let row = RowParam { columns: &columns };
+
+    if let Some(new_row) = ra.handle_pg_event(&table, row)? {
+        for cell in new_row.columns.into_iter() {
+            let name = &cell.name;
+            match cell.value {
+                DbValueResult::Boolean(b) => new.set_by_name(name, b)?,
+                DbValueResult::Str(s) => new.set_by_name(name, s)?,
+                DbValueResult::DbNull => new.set_by_name(name, Option::<&str>::None)?,
+                _ => (),
+            };
+        }
     }
 
     Ok(Some(new))
