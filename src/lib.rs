@@ -28,8 +28,8 @@ enum TriggerError {
 
 fn sample_app() -> run::App {
     run::App::new(
-        "ghcr.io/itowlson/pg-app-example:v3",
-        "/home/ivan/testing/pgtest/STATEYWATEY",
+        "ghcr.io/itowlson/pg-app-example:v4",
+        "/home/ivan/testing/pgtest/sample-app-state",
     )
 }
 
