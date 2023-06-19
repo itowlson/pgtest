@@ -1,4 +1,7 @@
-use std::sync::RwLock;
+mod run;
+mod trigger;
+
+use std::sync::OnceLock;
 
 use pgrx::prelude::*;
 
@@ -14,33 +17,46 @@ enum TriggerError {
     TryFromDatum(#[from] pgrx::datum::TryFromDatumError),
     #[error("TryFromInt error: {0}")]
     TryFromInt(#[from] std::num::TryFromIntError),
+    #[error("CantTable error: {0}")]
+    CantTable(#[from] PgTriggerError),
+    #[error("CantApp error: {0}")]
+    CantApp(#[from] anyhow::Error),
 }
 
-struct ArseBiscuit {
-    value: RwLock<i32>,
+fn sample_app() -> run::App {
+    run::App::new(
+        "ghcr.io/itowlson/pg-app-example:v2",
+        "/home/ivan/testing/pgtest/STATEYWATEY",
+    )
 }
 
-lazy_static::lazy_static! {
-    static ref PLOP: ArseBiscuit = ArseBiscuit { value: RwLock::new(123) };
+fn make_running_app(app: &run::App) -> anyhow::Result<run::RunningApp> {
+    let rt = tokio::runtime::Runtime::new()?;
+    let ra = rt.block_on(async {
+        run::run(app).await
+    })?;
+    println!("Loaded Spin app");
+    Ok(ra)
 }
+
+static CELL: OnceLock<run::RunningApp> = OnceLock::new();
 
 #[pg_trigger]
-fn triggly_wiggly<'a>(trigger: &'a pgrx::PgTrigger<'a>,) -> Result<Option<PgHeapTuple<'a, impl WhoAllocated>>, TriggerError> {
-    println!("I AM TRIGGLY WIGGLY");
-    {
-        let mut wr = PLOP.value.write().unwrap();
-        *wr = *wr + 1;
-    }
-    {
-        let rd = PLOP.value.read().unwrap();
-        println!("PLOPPLY BOPPLY {}", *rd);
-    }
+fn pass_to_spin_trigger<'a>(trigger: &'a pgrx::PgTrigger<'a>,) -> Result<Option<PgHeapTuple<'a, impl WhoAllocated>>, TriggerError> {
+    println!("Postgres trigger running");
 
+    let ra = CELL.get_or_init(|| {
+        let ra = make_running_app(&sample_app()).unwrap(); //.map_err(|e| TriggerError::CantApp(e))?;
+        ra
+    });
+
+    let table = trigger.table_name().map_err(|e| TriggerError::CantTable(e))?;
     let mut new = trigger.new().ok_or(TriggerError::NullTriggerTuple)?.into_owned();
     let col_name = "title";
 
-    if new.get_by_name(col_name)? == Some("Fox") {
-        new.set_by_name(col_name, "Bear")?;
+    if let Some(col_value) = new.get_by_name(col_name)? {
+        let new_value = ra.handle_pg_event(&table, col_value)?;
+        new.set_by_name(col_name, new_value)?;
     }
 
     Ok(Some(new))
@@ -55,11 +71,18 @@ CREATE TABLE test (
     payload jsonb
 );
 
-CREATE TRIGGER test_trigger BEFORE INSERT ON test FOR EACH ROW EXECUTE PROCEDURE triggly_wiggly();
+CREATE TABLE test2 (
+    id serial8 NOT NULL PRIMARY KEY,
+    title varchar(50),
+    description text
+);
+
+CREATE TRIGGER test_trigger BEFORE INSERT ON test FOR EACH ROW EXECUTE PROCEDURE pass_to_spin_trigger();
+CREATE TRIGGER test2_trigger BEFORE INSERT ON test2 FOR EACH ROW EXECUTE PROCEDURE pass_to_spin_trigger();
 -- INSERT INTO test (title, description, payload) VALUES ('Fox', 'a description', '{"key": "value"}');
 "#,
     name = "create_trigger",
-    requires = [triggly_wiggly]
+    requires = [pass_to_spin_trigger]
 );
 
 #[cfg(any(test, feature = "pg_test"))]
@@ -73,10 +96,16 @@ mod tests {
             r#"INSERT INTO test (title, description, payload) VALUES ('Fox', 'foxy goodness', '{"key": "value"}')"#,
         )?;
         Spi::run(
-            r#"INSERT INTO test (title, description, payload) VALUES ('a different title 2', 'a different description', '{"key": "value"}')"#,
+            r#"INSERT INTO test (title, description, payload) VALUES ('Box', 'a different description', '{"key": "value"}')"#,
         )?;
         Spi::run(
-            r#"INSERT INTO test (title, description, payload) VALUES ('a different title 3', 'a different description', '{"key": "value"}')"#,
+            r#"INSERT INTO test (title, description, payload) VALUES ('Locks', 'a different description', '{"key": "value"}')"#,
+        )?;
+        Spi::run(
+            r#"INSERT INTO test2 (title, description) VALUES ('test2 title', 'whee')"#,
+        )?;
+        Spi::run(
+            r#"INSERT INTO test2 (title, description) VALUES ('Pride and Penguins', 'Jane Austen but with waterfowl')"#,
         )?;
 
         Spi::connect(|client| {
@@ -92,7 +121,14 @@ mod tests {
         for r in res {
             let title: String = r.get_by_name("title")?.unwrap_or_default();
             let desc: String = r.get_by_name("description")?.unwrap_or_default();
-            println!("ROW! title='{title}' | desc = '{desc}'");
+            println!("[test row]  title='{title}' | desc = '{desc}'");
+        }
+
+        let res = client.select("SELECT * FROM test2", None, None)?;
+        for r in res {
+            let title: String = r.get_by_name("title")?.unwrap_or_default();
+            let desc: String = r.get_by_name("description")?.unwrap_or_default();
+            println!("[test2 row] title='{title}' | desc = '{desc}'");
         }
 
         Ok(())

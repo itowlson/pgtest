@@ -19,6 +19,18 @@ pg_test = []
 lazy_static = "1.4.0"
 pgrx = "=0.9.5"
 thiserror = "1.0.40"
+anyhow = "1.0"
+futures = "0.3.28"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0.82"
+spin-app = { git = "https://github.com/fermyon/spin", tag = "v1.3.0" }
+spin-core = { git = "https://github.com/fermyon/spin", tag = "v1.3.0" }
+spin-oci = { git = "https://github.com/fermyon/spin", tag = "v1.3.0" }
+spin-trigger = { git = "https://github.com/fermyon/spin", tag = "v1.3.0" }
+tempfile = "3.3.0"
+tokio = { version = "1.23", features = ["full"] }
+url = "2.4.0"
+wasmtime = { version = "8.0.1", features = ["component-model"] }
 
 [dev-dependencies]
 pgrx-tests = "=0.9.5"

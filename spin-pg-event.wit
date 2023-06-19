@@ -1,0 +1,3 @@
+default world spin-pg-event {
+  export handle-pg-event: func(col-value: string) -> string
+}
